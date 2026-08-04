@@ -20,6 +20,16 @@ st.set_page_config(
     initial_sidebar_state="expanded",
 )
 
+# ── 加宽侧边栏 ──
+st.markdown("""
+<style>
+    [data-testid="stSidebar"] {
+        min-width: 440px;
+        max-width: 520px;
+    }
+</style>
+""", unsafe_allow_html=True)
+
 # ══════════════════════════════════════════════════════════════
 # 厂商 & 模型定义
 # ══════════════════════════════════════════════════════════════
@@ -62,7 +72,7 @@ SYSTEM_PROMPT = """你是金融风控分析专家，擅长以下领域：
 # 风控分析模板
 # ══════════════════════════════════════════════════════════════
 TEMPLATES = {
-    # ── 风险监控类 ──
+    # ── 风险监控 ──
     "📊 Vintage账龄分析": (
         "请基于上传数据，进行Vintage账龄分析：\n"
         "1. 计算各放款月度的M0→M1、M1→M2、M2→M3+迁徙率\n"
@@ -93,7 +103,7 @@ TEMPLATES = {
         "4. 识别可能「误拒」的规则（命中率高但对应坏账率低的规则）\n"
         "5. 拒绝规则优化建议（阈值调整、豁免逻辑、灰度方案）"
     ),
-    # ── 模型与变量类 ──
+    # ── 模型变量 ──
     "📐 WOE/IV分箱分析": (
         "请基于上传数据，进行变量分箱与WOE/IV分析：\n"
         "1. 对关键变量进行最优分箱（等频/等距/卡方/决策树分箱对比）\n"
@@ -105,11 +115,19 @@ TEMPLATES = {
     "🔬 特征变量评估": (
         "请基于上传数据，进行特征变量全面评估：\n"
         "1. 各变量的IV值、KS值、AUC值对比排名\n"
-        "2. PSI稳定性指标（按时间/样本对比，PSI>0.25视为不稳定）\n"
-        "3. 变量缺失率与异常值分析\n"
-        "4. 变量间相关性矩阵（VIF多重共线性检验）\n"
-        "5. 变量重要性排序（信息增益/随机森林特征重要性）\n"
-        "6. 推荐核心变量组合及淘汰建议"
+        "2. 变量缺失率与异常值分析\n"
+        "3. 变量间相关性矩阵（VIF多重共线性检验，VIF>5需关注，>10需剔除）\n"
+        "4. 变量重要性排序（信息增益/随机森林特征重要性）\n"
+        "5. 推荐核心变量组合及淘汰建议"
+    ),
+    "📏 PSI稳定性分析": (
+        "请基于上传数据，进行PSI（Population Stability Index）稳定性分析：\n"
+        "1. 按时间维度计算各变量的PSI值（对比基准期 vs 观察期）\n"
+        "2. PSI评级：<0.1 稳定 / 0.1-0.25 轻微偏移 / >0.25 显著偏移，需排查\n"
+        "3. 识别PSI异常升高的关键变量，分析偏移方向（分数上移/下移）\n"
+        "4. 按客群维度（渠道、产品、地区）对比PSI差异\n"
+        "5. 模型分数PSI监控（整体模型分分布是否稳定）\n"
+        "6. 给出变量更新/模型重建的触发阈值建议"
     ),
     "🎯 评分卡效果评估": (
         "请进行评分卡效果评估：\n"
@@ -119,7 +137,7 @@ TEMPLATES = {
         "4. 不同cutoff阈值下的通过率与坏账率权衡\n"
         "5. 评分卡排序能力验证（分数越高坏账率是否单调递减）"
     ),
-    # ── 策略决策类 ──
+    # ── 策略决策 ──
     "🔄 Swap置换分析": (
         "请基于上传数据，进行Swap置换分析：\n"
         "1. 当前数据源A vs 候选数据源B 的覆盖率与命中率对比\n"
@@ -155,7 +173,28 @@ TEMPLATES = {
         "4. 不同客群维度的归因拆解（渠道×产品×时间）\n"
         "5. 提出针对性的风险缓释建议与优先级排序"
     ),
-    "💡 自由提问": "",
+}
+
+# ── 模板分组 ──
+TEMPLATE_GROUPS = {
+    "📊 风险监控": [
+        "📊 Vintage账龄分析",
+        "📈 迁徙率滚动分析",
+        "📋 通过率与拒绝率监控",
+        "🚫 拒绝原因深度分析",
+    ],
+    "🔬 模型与变量": [
+        "📐 WOE/IV分箱分析",
+        "🔬 特征变量评估",
+        "📏 PSI稳定性分析",
+        "🎯 评分卡效果评估",
+    ],
+    "🎯 策略决策": [
+        "🔄 Swap置换分析",
+        "🏆 冠军挑战者分析",
+        "📋 三方数据源评估",
+        "🔍 归因分析",
+    ],
 }
 
 # ══════════════════════════════════════════════════════════════
@@ -197,36 +236,26 @@ def build_data_context(df: pd.DataFrame, filename: str) -> str:
 
 
 def call_anthropic(api_key: str, model: str, system: str, messages: list, temperature: float) -> str:
-    """调用 Anthropic Claude API"""
     client = Anthropic(api_key=api_key)
     conversation = [{"role": m["role"], "content": m["content"]} for m in messages]
     resp = client.messages.create(
-        model=model,
-        max_tokens=4096,
-        system=system,
-        messages=conversation,
-        temperature=temperature,
+        model=model, max_tokens=4096, system=system, messages=conversation, temperature=temperature,
     )
     return resp.content[0].text
 
 
 def call_openai_compatible(api_key: str, base_url: str, model: str, system: str, messages: list, temperature: float) -> str:
-    """调用 OpenAI / DeepSeek 等兼容 API"""
     client = OpenAI(api_key=api_key, base_url=base_url)
     api_messages = [{"role": "system", "content": system}]
     for m in messages:
         api_messages.append({"role": m["role"], "content": m["content"]})
     resp = client.chat.completions.create(
-        model=model,
-        messages=api_messages,
-        max_tokens=4096,
-        temperature=temperature,
+        model=model, messages=api_messages, max_tokens=4096, temperature=temperature,
     )
     return resp.choices[0].message.content
 
 
 def route_api_call(provider: str, model: str, api_key: str, messages: list, temperature: float) -> str:
-    """根据厂商路由到对应 API"""
     if provider.startswith("Anthropic"):
         return call_anthropic(api_key, model, SYSTEM_PROMPT, messages, temperature)
     elif provider.startswith("OpenAI"):
@@ -238,12 +267,10 @@ def route_api_call(provider: str, model: str, api_key: str, messages: list, temp
 
 
 def export_conversation(messages: list, fmt: str) -> bytes:
-    """导出对话记录为指定格式"""
     records = []
     for i, m in enumerate(messages, 1):
         role = "用户" if m["role"] == "user" else "AI分析"
-        content = m["content"]
-        records.append({"序号": i, "角色": role, "内容": content, "时间": datetime.now().strftime("%Y-%m-%d %H:%M:%S") if i == len(messages) else ""})
+        records.append({"序号": i, "角色": role, "内容": m["content"]})
 
     df = pd.DataFrame(records)
 
@@ -254,13 +281,11 @@ def export_conversation(messages: list, fmt: str) -> bytes:
         with pd.ExcelWriter(buf, engine="openpyxl") as writer:
             df.to_excel(writer, index=False, sheet_name="对话记录")
         return buf.getvalue()
-    else:  # markdown
+    else:
         lines = [
             "# 🛡️ 金融风控智能分析助手 - 对话记录",
             f"导出时间: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}",
-            "",
-            "---",
-            "",
+            "", "---", "",
         ]
         for i, m in enumerate(messages, 1):
             role_label = "👤 用户" if m["role"] == "user" else "🤖 AI分析"
@@ -286,32 +311,12 @@ with st.sidebar:
     )
     st.divider()
 
-    # ── 1. 风控分析模板（置顶，核心功能入口）──
-    with st.expander("📋 风控分析模板（一键填充）", expanded=False):
-        st.caption("点击模板自动填充专业分析Prompt")
+    # ── 1. 自由提问 ──
+    if st.button("💡 自由提问", use_container_width=True):
+        st.session_state.pending_template = None
+        st.toast("请在底部输入框输入你的问题")
 
-        # 分组展示
-        groups = {
-            "📊 风险监控": ["📊 Vintage账龄分析", "📈 迁徙率滚动分析", "📋 通过率与拒绝率监控", "🚫 拒绝原因深度分析"],
-            "🔬 模型变量": ["📐 WOE/IV分箱分析", "🔬 特征变量评估", "🎯 评分卡效果评估"],
-            "🎯 策略决策": ["🔄 Swap置换分析", "🏆 冠军挑战者分析", "📋 三方数据源评估", "🔍 归因分析"],
-            "💡 其他": ["💡 自由提问"],
-        }
-
-        for group_name, items in groups.items():
-            st.caption(f"**{group_name}**")
-            for label in items:
-                content = TEMPLATES[label]
-                display = label.replace("📊 ", "").replace("📈 ", "").replace("📋 ", "").replace("🚫 ", "").replace("📐 ", "").replace("🔬 ", "").replace("🎯 ", "").replace("🔄 ", "").replace("🏆 ", "").replace("🔍 ", "").replace("💡 ", "")
-                if st.button(display, use_container_width=True, key=f"tpl_{label}"):
-                    if label == "💡 自由提问":
-                        st.session_state.pending_template = None
-                    else:
-                        st.session_state.pending_template = content
-
-    st.divider()
-
-    # ── 2. 数据上传 ──
+    # ── 2. 上传数据文件 ──
     with st.expander("📎 上传数据文件", expanded=False):
         uploaded_file = st.file_uploader(
             "支持 CSV / Excel（.csv / .xlsx）",
@@ -333,53 +338,64 @@ with st.sidebar:
 
                 st.success(f"✅ {uploaded_file.name}")
                 st.caption(f"📊 {len(df):,} 行 × {len(df.columns)} 列")
-
-                with st.expander("👁️ 数据预览", expanded=False):
-                    st.dataframe(df.head(10), use_container_width=True)
             except Exception as e:
                 st.error(f"读取失败: {e}")
 
-    # ── 3. 快速可视化 ──
+    # ── 3. 数据预览 & 快速可视化 ──
     if st.session_state.uploaded_data is not None:
-        with st.expander("📊 快速可视化", expanded=False):
-            df = st.session_state.uploaded_data
-            all_cols = list(df.columns)
-            numeric_cols = df.select_dtypes(include="number").columns.tolist()
-            cat_cols = df.select_dtypes(exclude="number").columns.tolist()
+        df = st.session_state.uploaded_data
+        all_cols = list(df.columns)
+        numeric_cols = df.select_dtypes(include="number").columns.tolist()
+        cat_cols = df.select_dtypes(exclude="number").columns.tolist()
 
-            # 图表类型
+        # 数据预览
+        with st.expander("👁️ 数据预览", expanded=False):
+            st.dataframe(df.head(15), use_container_width=True, height=300)
+            st.caption(f"共 {len(df):,} 行 × {len(df.columns)} 列 | 数值列: {len(numeric_cols)} | 分类列: {len(cat_cols)}")
+
+        # 快速可视化
+        with st.expander("📊 快速可视化", expanded=False):
             chart_type = st.selectbox(
                 "图表类型",
-                ["直方图", "箱线图", "折线图", "散点图", "柱状图", "饼图"],
+                ["直方图", "箱线图", "折线图", "散点图", "柱状图", "饼图", "相关性热力图"],
                 key="viz_chart_type",
             )
 
             if chart_type == "散点图":
-                col_x = st.selectbox("X轴", all_cols, key="viz_x")
-                col_y = st.selectbox("Y轴", all_cols, key="viz_y")
+                col1, col2 = st.columns(2)
+                with col1:
+                    col_x = st.selectbox("X轴", all_cols, key="viz_x")
+                with col2:
+                    col_y = st.selectbox("Y轴", all_cols, key="viz_y")
                 color_col = st.selectbox("颜色分组（可选）", ["无"] + all_cols, key="viz_color")
+                size_col = st.selectbox("气泡大小（可选）", ["无"] + numeric_cols if numeric_cols else ["无"], key="viz_size")
                 if st.button("生成散点图", use_container_width=True):
                     try:
                         fig = px.scatter(
                             df, x=col_x, y=col_y,
                             color=None if color_col == "无" else color_col,
+                            size=None if size_col == "无" else size_col,
                             title=f"{col_y} vs {col_x}",
-                            opacity=0.6,
+                            opacity=0.6, height=380,
                         )
                         st.plotly_chart(fig, use_container_width=True)
                     except Exception as e:
                         st.error(f"生成失败: {e}")
 
             elif chart_type == "折线图":
-                col_x = st.selectbox("X轴（时间/类别）", all_cols, key="viz_x")
-                col_y = st.selectbox("Y轴（数值）", numeric_cols if numeric_cols else all_cols, key="viz_y")
+                col1, col2 = st.columns(2)
+                with col1:
+                    col_x = st.selectbox("X轴", all_cols, key="viz_x")
+                with col2:
+                    col_y = st.selectbox("Y轴", numeric_cols if numeric_cols else all_cols, key="viz_y")
+                color_col = st.selectbox("分组折线（可选）", ["无"] + cat_cols if cat_cols else ["无"], key="viz_color")
                 if st.button("生成折线图", use_container_width=True):
                     try:
+                        sorted_df = df.sort_values(col_x) if col_x in df.columns else df
                         fig = px.line(
-                            df.sort_values(col_x) if col_x in df.columns else df,
-                            x=col_x, y=col_y,
-                            title=f"{col_y} 趋势图",
-                            markers=True,
+                            sorted_df, x=col_x, y=col_y,
+                            color=None if color_col == "无" else color_col,
+                            title=f"{col_y} 趋势图", markers=True, height=380,
                         )
                         st.plotly_chart(fig, use_container_width=True)
                     except Exception as e:
@@ -392,7 +408,7 @@ with st.sidebar:
                     try:
                         counts = df[col_x].value_counts().nlargest(top_n).reset_index()
                         counts.columns = [col_x, "频次"]
-                        fig = px.bar(counts, x=col_x, y="频次", title=f"{col_x} 分布 TOP{top_n}")
+                        fig = px.bar(counts, x=col_x, y="频次", title=f"{col_x} 分布 TOP{top_n}", height=380)
                         st.plotly_chart(fig, use_container_width=True)
                     except Exception as e:
                         st.error(f"生成失败: {e}")
@@ -404,7 +420,7 @@ with st.sidebar:
                     try:
                         counts = df[col_x].value_counts().nlargest(top_n).reset_index()
                         counts.columns = [col_x, "频次"]
-                        fig = px.pie(counts, names=col_x, values="频次", title=f"{col_x} 占比 TOP{top_n}")
+                        fig = px.pie(counts, names=col_x, values="频次", title=f"{col_x} 占比 TOP{top_n}", height=380)
                         st.plotly_chart(fig, use_container_width=True)
                     except Exception as e:
                         st.error(f"生成失败: {e}")
@@ -412,59 +428,101 @@ with st.sidebar:
             elif chart_type == "直方图":
                 col_x = st.selectbox("数值列", numeric_cols if numeric_cols else all_cols, key="viz_x")
                 nbins = st.slider("分箱数", 10, 100, 40, key="viz_bins")
+                color_col = st.selectbox("分层着色（可选）", ["无"] + cat_cols if cat_cols else ["无"], key="viz_color")
                 if st.button("生成直方图", use_container_width=True):
                     try:
-                        fig = px.histogram(df, x=col_x, nbins=nbins, title=f"{col_x} 分布直方图", marginal="box")
+                        fig = px.histogram(
+                            df, x=col_x, nbins=nbins,
+                            color=None if color_col == "无" else color_col,
+                            title=f"{col_x} 分布直方图", marginal="box", height=380,
+                        )
                         st.plotly_chart(fig, use_container_width=True)
                     except Exception as e:
                         st.error(f"生成失败: {e}")
 
             elif chart_type == "箱线图":
                 col_y = st.selectbox("数值列", numeric_cols if numeric_cols else all_cols, key="viz_y")
-                col_x = st.selectbox("分组列（可选）", ["无"] + all_cols, key="viz_x")
+                col_x = st.selectbox("分组列（可选）", ["无"] + cat_cols if cat_cols else ["无"], key="viz_x")
                 if st.button("生成箱线图", use_container_width=True):
                     try:
                         fig = px.box(
                             df, x=None if col_x == "无" else col_x, y=col_y,
-                            title=f"{col_y} 箱线图",
+                            title=f"{col_y} 箱线图", height=380,
                         )
                         st.plotly_chart(fig, use_container_width=True)
                     except Exception as e:
                         st.error(f"生成失败: {e}")
 
-    # ── 4. 温度参数 ──
+            elif chart_type == "相关性热力图":
+                if len(numeric_cols) >= 2:
+                    if st.button("生成相关性热力图", use_container_width=True):
+                        try:
+                            corr = df[numeric_cols].corr()
+                            fig = px.imshow(
+                                corr, text_auto=".2f", aspect="auto",
+                                title="数值变量相关性矩阵",
+                                color_continuous_scale="RdBu_r",
+                                zmin=-1, zmax=1, height=480,
+                            )
+                            st.plotly_chart(fig, use_container_width=True)
+                        except Exception as e:
+                            st.error(f"生成失败: {e}")
+                else:
+                    st.info("需要至少2个数值列才能生成热力图")
+
+    # ── 4. 风控智能分析模板 ──
+    with st.expander("📋 风控分析模板（一键生成）", expanded=False):
+        st.caption("点击模板自动生成专业分析提示词")
+
+        for group_name, items in TEMPLATE_GROUPS.items():
+            st.caption(f"**{group_name}**")
+            for label in items:
+                content = TEMPLATES[label]
+                # 去掉 emoji 前缀作为按钮文字
+                display = label.split(" ", 1)[1] if " " in label else label
+                if st.button(display, use_container_width=True, key=f"tpl_{label}"):
+                    st.session_state.pending_template = content
+                    st.toast(f"已加载: {display}")
+
+    st.divider()
+
+    # ── 5. 温度参数 ──
     with st.expander("🎚️ 温度参数（控制回答随机性）", expanded=False):
-        st.caption("越低越严谨稳定（适合计算），越高越有创造性（适合策略建议）")
+        st.caption("越低越严谨稳定（计算），越高越有创造性（策略建议）")
         temperature = st.slider(
             "Temperature",
-            min_value=0.0,
-            max_value=1.0,
-            value=0.3,
-            step=0.1,
+            min_value=0.0, max_value=1.0, value=0.3, step=0.1,
             help="0=极度严谨 | 0.3=平衡（推荐） | 1.0=创造性",
             label_visibility="collapsed",
         )
         if temperature <= 0.2:
-            st.caption("🔒 当前: 极度严谨 — 适合数据计算与指标提取")
+            st.caption("🔒 极度严谨 — 适合数据计算")
         elif temperature <= 0.5:
-            st.caption("⚖️ 当前: 平衡 — 推荐用于风控分析")
+            st.caption("⚖️ 平衡模式 — 推荐风控分析")
         else:
-            st.caption("🎨 当前: 创造性 — 适合策略思路发散")
+            st.caption("🎨 创造性模式 — 适合策略发散")
 
     st.divider()
 
-    # ── 5. 导出 & 清空 ──
+    # ── 6. 清除对话 & 导出记录 ──
     col1, col2 = st.columns(2)
     with col1:
-        if st.button("🗑️ 清空对话", use_container_width=True):
+        if st.button("🗑️ 清除对话", use_container_width=True):
             st.session_state.messages = []
             st.rerun()
     with col2:
         if st.session_state.messages:
-            export_fmt = st.selectbox("导出格式", ["md", "xlsx", "csv"], label_visibility="collapsed", key="export_fmt")
-            fmt_label = {"md": "📥 MD", "xlsx": "📥 Excel", "csv": "📥 CSV"}
+            export_fmt = st.selectbox(
+                "格式", ["md", "xlsx", "csv"],
+                label_visibility="collapsed", key="export_fmt",
+            )
+            fmt_label = {"md": "📥 导出 MD", "xlsx": "📥 导出 Excel", "csv": "📥 导出 CSV"}
             ext_map = {"md": "md", "xlsx": "xlsx", "csv": "csv"}
-            mime_map = {"md": "text/markdown", "xlsx": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", "csv": "text/csv"}
+            mime_map = {
+                "md": "text/markdown",
+                "xlsx": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                "csv": "text/csv",
+            }
             data = export_conversation(st.session_state.messages, export_fmt)
             st.download_button(
                 label=fmt_label[export_fmt],
@@ -478,13 +536,9 @@ with st.sidebar:
 
     st.divider()
 
-    # ── 6. API 密钥配置（放在最底部，不显眼）──
+    # ── 7. API 密钥配置（底部，不显眼）──
     with st.expander("🔑 API 配置", expanded=False):
-        selected_provider = st.selectbox(
-            "AI 厂商",
-            list(PROVIDERS.keys()),
-        )
-
+        selected_provider = st.selectbox("AI 厂商", list(PROVIDERS.keys()))
         env_key_name = PROVIDERS[selected_provider]["env_key"]
         env_val = os.getenv(env_key_name, "")
         api_key = st.text_input(
@@ -494,10 +548,10 @@ with st.sidebar:
             placeholder=f"输入 Key 或设环境变量 {env_key_name}",
             key=f"api_key_{selected_provider}",
         )
-
         models_available = PROVIDERS[selected_provider]["models"]
         model = st.selectbox("模型", models_available, label_visibility="collapsed")
 
+    # ── 8. 免责声明 ──
     st.caption("⚠️ AI分析仅供参考，不替代专业风控决策")
 
 # ══════════════════════════════════════════════════════════════
@@ -509,7 +563,6 @@ st.caption(
     "置换分析 & 冠军挑战者 | 支持 Claude / GPT / DeepSeek 多模型交叉验证"
 )
 
-# 数据已加载提示
 if st.session_state.uploaded_data is not None:
     st.info(
         f"📎 已加载: **{st.session_state.uploaded_filename}** "
@@ -527,7 +580,7 @@ input_value = st.session_state.pending_template
 if input_value is not None:
     st.session_state.pending_template = None
 
-prompt = st.chat_input("输入风控分析问题，或点击左侧模板一键填充…")
+prompt = st.chat_input("输入风控分析问题，或点击左侧模板一键生成…")
 
 if not prompt and input_value:
     prompt = input_value
@@ -537,35 +590,27 @@ if prompt:
         st.error(f"❌ 请先在侧边栏底部「API 配置」中输入 {selected_provider} 的 API Key")
         st.stop()
 
-    # 构建数据上下文
     data_context = ""
     if st.session_state.uploaded_data is not None:
         data_context = build_data_context(
-            st.session_state.uploaded_data,
-            st.session_state.uploaded_filename,
+            st.session_state.uploaded_data, st.session_state.uploaded_filename,
         )
 
     user_content = data_context + "\n---\n用户问题: " + prompt if data_context else prompt
 
-    # 显示用户消息
     st.session_state.messages.append({"role": "user", "content": user_content})
     with st.chat_message("user"):
         st.markdown(prompt)
 
-    # 调用 AI
     with st.chat_message("assistant"):
         with st.spinner(f"🧠 {selected_provider.split(' ')[0]} / {model} 分析中…"):
             try:
                 reply = route_api_call(
-                    provider=selected_provider,
-                    model=model,
-                    api_key=api_key,
-                    messages=st.session_state.messages,
-                    temperature=temperature,
+                    provider=selected_provider, model=model, api_key=api_key,
+                    messages=st.session_state.messages, temperature=temperature,
                 )
                 st.markdown(reply)
 
-                # 尝试识别 Plotly 代码块
                 plotly_match = re.search(r"```python\s*(import plotly.*?fig\.show\(\))\s*```", reply, re.DOTALL)
                 if plotly_match:
                     with st.expander("📊 查看图表代码"):
@@ -574,12 +619,12 @@ if prompt:
 
             except Exception as e:
                 error_msg = str(e)
-                if "401" in error_msg or "invalid" in error_msg.lower() or "authentication" in error_msg.lower():
+                if any(kw in error_msg.lower() for kw in ["401", "invalid", "authentication"]):
                     reply = f"❌ API Key 无效，请检查 {selected_provider} 的密钥。"
                 elif "429" in error_msg:
-                    reply = f"❌ 调用频率超限，请稍后重试。"
+                    reply = "❌ 调用频率超限，请稍后重试。"
                 elif "timeout" in error_msg.lower():
-                    reply = f"❌ 请求超时，请重试。"
+                    reply = "❌ 请求超时，请重试。"
                 else:
                     reply = f"❌ 调用失败: {error_msg}"
                 st.error(reply)
